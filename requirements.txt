@@ -1,0 +1,4 @@
+# Note Agent Dependencies
+
+# Config parsing
+pyyaml>=6.0

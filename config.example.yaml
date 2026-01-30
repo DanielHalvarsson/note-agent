@@ -1,0 +1,11 @@
+# Note Agent Configuration Example
+# Copy this to config.yaml and adjust paths
+
+# Obsidian vault configuration
+obsidian:
+  vault_path: "/home/server_lama/obsidian-vault"  # Path to your Obsidian vault
+
+# Claude Code CLI
+claude_cli:
+  bin: "/home/server_lama/.local/bin/claude"
+  model: "haiku"  # Fast for note-taking operations

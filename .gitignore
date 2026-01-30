@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+
+# State files
+state/*.json
+state/*.log
+!state/.gitkeep
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Config (contains vault path)
+config.yaml
+
+# Logs
+*.log
+logs/
+
+# Obsidian vault (don't commit user's notes!)
+obsidian-vault/
