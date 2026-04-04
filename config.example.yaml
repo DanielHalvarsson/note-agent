@@ -9,3 +9,15 @@ obsidian:
 claude_cli:
   bin: "/home/server_lama/.local/bin/claude"
   model: "haiku"  # Fast for note-taking operations
+
+# Wiki compiler
+wiki:
+  sections:
+    - research
+    - ideas
+    - references
+    - personal
+  compile_model: "sonnet"
+  classify_model: "haiku"
+  compile_timeout: 120
+  max_article_sources: 20
