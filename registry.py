@@ -109,7 +109,7 @@ def get_pending_sources(vault_path: Path) -> list:
 
 
 def register_article(vault_path: Path, slug: str, title: str, section: str,
-                     summary: str, tags: list) -> None:
+                     summary: str, tags: list, source_count: int = None) -> None:
     """Add or update an article entry in the registry."""
     registry = load_registry(vault_path)
     now = datetime.now().isoformat(timespec="seconds")
@@ -119,7 +119,7 @@ def register_article(vault_path: Path, slug: str, title: str, section: str,
         "section": section,
         "summary": summary,
         "last_updated": now,
-        "source_count": existing.get("source_count", 0),
+        "source_count": source_count if source_count is not None else existing.get("source_count", 0),
         "tags": tags,
     }
     # Update section article count
