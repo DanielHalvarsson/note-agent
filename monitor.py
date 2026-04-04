@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
 """
-Note Agent Monitor — runs once daily at 21:00 weekdays + Sunday via cron.
+Note Agent Monitor — runs once daily via cron.
 
 Conditions checked:
-  1. Narration gap (≥3 working days without narration)
-  2. Weekly synthesis ready (Sundays, ≥3 narrations this week)
+  1. Pending source alert — sources pending compilation for >48 hours
+  2. Stale section alert  — section with pending sources not updated in 2+ weeks
+  3. Wiki review prompt   — Sundays, if ≥1 article exists in any section
 """
 
 import sys
 import json
 import logging
 import subprocess
-from datetime import datetime, timedelta, timezone, date
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, "/home/server_lama/server-projects/personal-assistant")
@@ -69,98 +70,140 @@ def record_alert(state, key):
     state["alerts"].append({"key": key, "timestamp": datetime.now(timezone.utc).isoformat()})
 
 
-def count_working_days_without_narration(narrations, days_back=7):
-    """Count consecutive working days from today backwards without a narration."""
-    narration_dates = set()
-    for n in narrations:
-        d = n.get("date") or n.get("created_at", "")[:10]
-        if d:
-            narration_dates.add(d)
-
-    count = 0
-    today = date.today()
-    for i in range(1, days_back + 1):
-        day = today - timedelta(days=i)
-        if day.weekday() >= 5:  # weekend
-            continue
-        if day.isoformat() not in narration_dates:
-            count += 1
-        else:
-            break  # consecutive count stops at first narration
-
-    return count
+def _get_vault_path() -> Path:
+    import yaml
+    config_path = AGENT_DIR / "config.yaml"
+    with open(config_path) as f:
+        cfg = yaml.safe_load(f)
+    return Path(cfg["obsidian"]["vault_path"])
 
 
-def check_narration_gap():
-    """Alert if ≥3 working days without narration."""
+def check_pending_sources():
+    """Alert if sources have been pending compilation for >48 hours."""
     alerts = []
     try:
-        result = subprocess.run(
-            ["uv", "run", "scripts/note.py", "list-narrations", "--last", "7"],
-            capture_output=True, text=True,
-            cwd=str(AGENT_DIR),
-            timeout=30
-        )
-        if result.returncode != 0:
-            logging.warning(f"list-narrations failed: {result.stderr.strip()}")
-            return alerts
+        vault = _get_vault_path()
+        sys.path.insert(0, str(AGENT_DIR))
+        from registry import get_pending_sources
 
-        narrations = json.loads(result.stdout) if result.stdout.strip() else []
-        if isinstance(narrations, dict):
-            narrations = narrations.get("narrations", narrations.get("items", []))
+        pending = get_pending_sources(vault)
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=48)
+
+        stale = []
+        for s in pending:
+            received_str = s.get("received", "")
+            if not received_str:
+                continue
+            received = datetime.fromisoformat(received_str)
+            if received.tzinfo is None:
+                received = received.replace(tzinfo=timezone.utc)
+            if received < cutoff:
+                stale.append(s)
+
+        if stale:
+            now = datetime.now(timezone.utc)
+            week_key = now.strftime('%Y-W%W')
+            key = f"pending_sources_stale:{week_key}"
+            msg = (
+                f"📚 {len(stale)} source(s) waiting to be compiled into the wiki "
+                f"(oldest: {stale[0]['path'].split('/')[-1]}).\n"
+                f"Run: <code>uv run python compile.py --all</code>"
+            )
+            alerts.append((key, msg, 48))
 
     except Exception as e:
-        logging.warning(f"check_narration_gap error: {e}")
-        return alerts
-
-    working_days_without = count_working_days_without_narration(narrations, days_back=7)
-    if working_days_without >= 3:
-        now = datetime.now(timezone.utc)
-        week_key = now.strftime('%Y-W%W')
-        key = f"narration_gap:{week_key}"
-        msg = (
-            f"📝 No narration in {working_days_without} working days.\n"
-            f"Even 2 sentences helps — what's been happening?"
-        )
-        alerts.append((key, msg, 24))
+        logging.warning(f"check_pending_sources error: {e}")
 
     return alerts
 
 
-def check_weekly_synthesis():
-    """On Sundays, prompt for weekly synthesis if ≥3 narrations this week."""
+def check_stale_sections():
+    """Alert if a section hasn't been updated in 2+ weeks but has pending sources."""
+    alerts = []
+    try:
+        vault = _get_vault_path()
+        sys.path.insert(0, str(AGENT_DIR))
+        from registry import load_registry, get_pending_sources
+        from indexer import SECTIONS
+
+        registry = load_registry(vault)
+        pending = get_pending_sources(vault)
+        if not pending:
+            return alerts
+
+        # Group pending by suggested section (infer from path)
+        pending_sections = set()
+        for s in pending:
+            path = s.get("path", "")
+            if "papers" in path:
+                pending_sections.add("references")
+            elif "clippings" in path:
+                pending_sections.add("references")
+            elif "fragments" in path:
+                pending_sections.add("ideas")
+            else:
+                pending_sections.add("research")
+
+        two_weeks_ago = datetime.now(timezone.utc) - timedelta(weeks=2)
+        stale_sections = []
+
+        for section in pending_sections:
+            section_data = registry.get("sections", {}).get(section, {})
+            last_updated = section_data.get("last_updated")
+            if last_updated is None:
+                stale_sections.append(section)
+            else:
+                lu = datetime.fromisoformat(last_updated)
+                if lu.tzinfo is None:
+                    lu = lu.replace(tzinfo=timezone.utc)
+                if lu < two_weeks_ago:
+                    stale_sections.append(section)
+
+        if stale_sections:
+            now = datetime.now(timezone.utc)
+            week_key = now.strftime('%Y-W%W')
+            key = f"stale_sections:{week_key}"
+            sections_str = ", ".join(stale_sections)
+            msg = (
+                f"📖 Wiki sections with pending sources haven't been updated in 2+ weeks: "
+                f"<b>{sections_str}</b>.\n"
+                f"Compile to keep the wiki current."
+            )
+            alerts.append((key, msg, 7 * 24))
+
+    except Exception as e:
+        logging.warning(f"check_stale_sections error: {e}")
+
+    return alerts
+
+
+def check_wiki_review():
+    """On Sundays, prompt for wiki review if ≥1 article exists."""
     alerts = []
     now = datetime.now(timezone.utc)
     if now.weekday() != 6:  # 6 = Sunday
         return alerts
 
     try:
-        result = subprocess.run(
-            ["uv", "run", "scripts/note.py", "list-narrations", "--week", "current"],
-            capture_output=True, text=True,
-            cwd=str(AGENT_DIR),
-            timeout=30
-        )
-        if result.returncode != 0:
-            logging.warning(f"list-narrations week failed: {result.stderr.strip()}")
+        vault = _get_vault_path()
+        sys.path.insert(0, str(AGENT_DIR))
+        from registry import list_articles
+
+        articles = list_articles(vault)
+        if not articles:
             return alerts
 
-        narrations = json.loads(result.stdout) if result.stdout.strip() else []
-        if isinstance(narrations, dict):
-            narrations = narrations.get("narrations", narrations.get("items", []))
-
-    except Exception as e:
-        logging.warning(f"check_weekly_synthesis error: {e}")
-        return alerts
-
-    if len(narrations) >= 3:
         week_key = now.strftime('%Y-W%W')
-        key = f"weekly_synthesis_ready:{week_key}"
+        key = f"wiki_review:{week_key}"
         msg = (
-            f"📝 {len(narrations)} narrations this week.\n"
-            f"Want me to run the weekly synthesis and find threads?"
+            f"📚 Wiki has {len(articles)} article(s) across sections.\n"
+            f"Ask me: <i>\"What does the wiki know about X?\"</i> or "
+            f"<i>\"Wiki status\"</i> to see what's been compiled."
         )
         alerts.append((key, msg, 7 * 24))
+
+    except Exception as e:
+        logging.warning(f"check_wiki_review error: {e}")
 
     return alerts
 
@@ -171,8 +214,9 @@ def main():
     alerts_sent = 0
 
     conditions = [
-        (check_narration_gap, 24),
-        (check_weekly_synthesis, 7 * 24),
+        (check_pending_sources, 48),
+        (check_stale_sections, 7 * 24),
+        (check_wiki_review, 7 * 24),
     ]
 
     for fn, cooldown in conditions:
@@ -184,7 +228,7 @@ def main():
                     break
                 cd = rest[0] if rest else cooldown
                 if not already_alerted(state, key, cooldown_hours=cd):
-                    send_telegram_message(msg, context_agent="monitor:note")
+                    send_telegram_message(msg, context_agent="monitor:note", parse_mode="HTML")
                     record_alert(state, key)
                     alerts_sent += 1
                     logging.info(f"Alert sent: {key}")
