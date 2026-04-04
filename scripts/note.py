@@ -10,13 +10,16 @@ Usage:
     python note.py search "<query>" [--folder Daily] [--tags tag1,tag2]
     python note.py read "<filename>"
     python note.py list [--folder Daily] [--limit 10]
+    python note.py save-narration "<content>" [day_type] [date YYYY-MM-DD]
+    python note.py list-narrations [--week current|last] [--last N] [--keyword X]
+    python note.py save-draft "<title>" "<content>"
 """
 
 import sys
 import os
 import json
 import re
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from pathlib import Path
 from typing import Optional, List
 
@@ -304,6 +307,148 @@ def list_notes(folder: Optional[str] = None, limit: int = 10) -> List[dict]:
     return results
 
 
+def save_narration(content: str, day_type: Optional[str] = None, target_date: Optional[date] = None) -> str:
+    """Save a narration to narrations/YYYY-MM-DD.md (creates or appends)."""
+    vault_path = get_vault_path()
+    narrations_folder = vault_path / "narrations"
+    narrations_folder.mkdir(parents=True, exist_ok=True)
+
+    if target_date is None:
+        target_date = date.today()
+
+    note_path = narrations_folder / f"{target_date.isoformat()}.md"
+
+    if not note_path.exists():
+        # Build frontmatter
+        fm_lines = ['---', f'type: narration', f'date: {target_date.isoformat()}']
+        if day_type:
+            fm_lines.append(f'day_type: {day_type}')
+        fm_lines.append('---')
+        frontmatter = '\n'.join(fm_lines)
+
+        # Build heading
+        heading_date = target_date.strftime("%B %-d, %Y")
+        if day_type:
+            heading = f"# Narration — {heading_date} ({day_type.replace('-', ' ').title()} Day)"
+        else:
+            heading = f"# Narration — {heading_date}"
+
+        note_path.write_text(f"{frontmatter}\n\n{heading}\n\n{content}\n", encoding='utf-8')
+    else:
+        # Append to existing narration with timestamp separator
+        timestamp = datetime.now().strftime("%H:%M")
+        with open(note_path, 'a', encoding='utf-8') as f:
+            f.write(f"\n---\n\n*{timestamp}*\n\n{content}\n")
+
+    result = {
+        'status': 'saved',
+        'path': str(note_path.relative_to(vault_path)),
+        'date': target_date.isoformat(),
+        'day_type': day_type
+    }
+    print(json.dumps(result, indent=2))
+    return str(note_path)
+
+
+def list_narrations(week: Optional[str] = None, last_n: Optional[int] = None, keyword: Optional[str] = None) -> List[dict]:
+    """List narrations by week, last N, or keyword search."""
+    vault_path = get_vault_path()
+    narrations_folder = vault_path / "narrations"
+
+    if not narrations_folder.exists():
+        print(json.dumps([]))
+        return []
+
+    today = date.today()
+
+    # Determine date range
+    start_date = None
+    end_date = None
+
+    if week == "current":
+        # Monday to Sunday of current week
+        monday = today - timedelta(days=today.weekday())
+        start_date = monday
+        end_date = monday + timedelta(days=6)
+    elif week == "last":
+        monday = today - timedelta(days=today.weekday() + 7)
+        start_date = monday
+        end_date = monday + timedelta(days=6)
+
+    # Collect narration files
+    narration_files = sorted(narrations_folder.glob("*.md"), reverse=True)
+
+    results = []
+    for nf in narration_files:
+        # Parse date from filename
+        try:
+            file_date = date.fromisoformat(nf.stem)
+        except ValueError:
+            continue
+
+        # Apply date filter
+        if start_date and not (start_date <= file_date <= end_date):
+            continue
+
+        content = nf.read_text(encoding='utf-8')
+
+        # Apply keyword filter
+        if keyword and keyword.lower() not in content.lower():
+            continue
+
+        results.append({
+            'path': str(nf.relative_to(vault_path)),
+            'date': file_date.isoformat(),
+            'content': content
+        })
+
+    # Apply last N limit (after date filter)
+    if last_n is not None:
+        results = results[:last_n]
+
+    print(json.dumps(results, indent=2))
+    return results
+
+
+def save_draft(title: str, content: str) -> str:
+    """Save a draft post to drafts/YYYY-MM-DD-<topic-slug>.md."""
+    vault_path = get_vault_path()
+    drafts_folder = vault_path / "drafts"
+    drafts_folder.mkdir(parents=True, exist_ok=True)
+
+    today = date.today()
+    slug = sanitize_filename(title).lower()
+    filename = f"{today.isoformat()}-{slug}.md"
+    draft_path = drafts_folder / filename
+
+    # Handle duplicates
+    counter = 1
+    while draft_path.exists():
+        draft_path = drafts_folder / f"{today.isoformat()}-{slug}-{counter}.md"
+        counter += 1
+
+    fm_lines = [
+        '---',
+        f'type: draft',
+        f'date: {today.isoformat()}',
+        f'source: narrations',
+        f'status: draft',
+        '---'
+    ]
+    frontmatter = '\n'.join(fm_lines)
+
+    draft_path.write_text(f"{frontmatter}\n\n{content}\n", encoding='utf-8')
+
+    result = {
+        'status': 'saved',
+        'path': str(draft_path.relative_to(vault_path)),
+        'title': title,
+        'date': today.isoformat()
+    }
+    print(json.dumps(result, indent=2))
+    return str(draft_path)
+
+
 def main():
     if len(sys.argv) < 2:
         print(__doc__)
@@ -327,7 +472,15 @@ def main():
             sys.exit(1)
         content = sys.argv[2]
         tags = sys.argv[3].split(',') if len(sys.argv) > 3 and sys.argv[3] else None
-        append_to_daily(content, tags=tags)
+        # Optional date override as 4th arg YYYY-MM-DD
+        target_date = None
+        if len(sys.argv) > 4 and sys.argv[4]:
+            try:
+                target_date = date.fromisoformat(sys.argv[4])
+            except ValueError:
+                print(f"ERROR: invalid date format: {sys.argv[4]}", file=sys.stderr)
+                sys.exit(1)
+        append_to_daily(content, tags=tags, target_date=target_date)
 
     elif command == "search":
         if len(sys.argv) < 3:
@@ -348,6 +501,48 @@ def main():
         folder = sys.argv[2] if len(sys.argv) > 2 else None
         limit = int(sys.argv[3]) if len(sys.argv) > 3 else 10
         list_notes(folder=folder, limit=limit)
+
+    elif command == "save-narration":
+        if len(sys.argv) < 3:
+            print("ERROR: content required")
+            sys.exit(1)
+        content = sys.argv[2]
+        day_type = sys.argv[3] if len(sys.argv) > 3 and sys.argv[3] else None
+        # Optional date override as 4th arg YYYY-MM-DD
+        target_date = None
+        if len(sys.argv) > 4 and sys.argv[4]:
+            try:
+                target_date = date.fromisoformat(sys.argv[4])
+            except ValueError:
+                print(f"ERROR: invalid date format: {sys.argv[4]}", file=sys.stderr)
+                sys.exit(1)
+        save_narration(content, day_type=day_type, target_date=target_date)
+
+    elif command == "list-narrations":
+        week = None
+        last_n = None
+        keyword = None
+        i = 2
+        while i < len(sys.argv):
+            arg = sys.argv[i]
+            if arg == "--week" and i + 1 < len(sys.argv):
+                week = sys.argv[i + 1]
+                i += 2
+            elif arg == "--last" and i + 1 < len(sys.argv):
+                last_n = int(sys.argv[i + 1])
+                i += 2
+            elif arg == "--keyword" and i + 1 < len(sys.argv):
+                keyword = sys.argv[i + 1]
+                i += 2
+            else:
+                i += 1
+        list_narrations(week=week, last_n=last_n, keyword=keyword)
+
+    elif command == "save-draft":
+        if len(sys.argv) < 4:
+            print("ERROR: title and content required")
+            sys.exit(1)
+        save_draft(sys.argv[2], sys.argv[3])
 
     else:
         print(f"Unknown command: {command}")

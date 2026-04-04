@@ -29,14 +29,14 @@ uv run scripts/note.py list "Inbox" 5
 
 ```bash
 # Quick captures
-python3 query.py "Note: Testing the note agent setup"
-python3 query.py "Capture: Remember to integrate with router"
+uv run python query.py "Note: Testing the note agent setup"
+uv run python query.py "Capture: Remember to integrate with router"
 
 # Daily notes
-python3 query.py "Add to today: Setup completed successfully"
+uv run python query.py "Add to today: Setup completed successfully"
 
 # Search
-python3 query.py "What did I note about setup?"
+uv run python query.py "What did I note about setup?"
 ```
 
 ### 3. Open Dedicated Session
@@ -61,7 +61,7 @@ Edit `/home/server_lama/server-projects/personal-assistant/config.yaml`:
 agents:
   note:
     path: "/home/server_lama/server-projects/note-agent"
-    query_command: "python query.py"
+    query_command: "uv run python query.py"
     model: "haiku"
 ```
 
@@ -132,7 +132,7 @@ cat ~/obsidian-vault/Inbox/Meeting.md
 Set CONVERSATION_CONTEXT env var:
 ```bash
 export CONVERSATION_CONTEXT='[{"role":"user","content":"I just talked to Dennis about Canadian"},{"role":"assistant","content":"How did it go?"}]'
-python3 query.py "Note that"
+uv run python query.py "Note that"
 ```
 
 **Debugging:**

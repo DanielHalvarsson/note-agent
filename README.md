@@ -85,9 +85,9 @@ nano config.yaml  # Set vault_path
 chmod +x query.py scripts/note.py
 
 # Test operations
-python3 query.py "Note: Testing the note agent"
-python3 query.py "Add to today: Setup completed"
-python3 query.py "What did I note today?"
+uv run python query.py "Note: Testing the note agent"
+uv run python query.py "Add to today: Setup completed"
+uv run python query.py "What did I note today?"
 ```
 
 ## Usage Examples
@@ -95,9 +95,9 @@ python3 query.py "What did I note today?"
 ### Quick Captures
 
 ```bash
-python3 query.py "Note: had great idea about using AI for X"
-python3 query.py "Capture: follow up with Dennis about Canadian"
-python3 query.py "Remember: Sarah mentioned budget approval"
+uv run python query.py "Note: had great idea about using AI for X"
+uv run python query.py "Capture: follow up with Dennis about Canadian"
+uv run python query.py "Remember: Sarah mentioned budget approval"
 ```
 
 **Result:** Saves to `Inbox/` with auto-detected tags and metadata.
@@ -105,9 +105,9 @@ python3 query.py "Remember: Sarah mentioned budget approval"
 ### Daily Notes
 
 ```bash
-python3 query.py "Add to today: Met with team, discussed Q1 goals"
-python3 query.py "Log: Completed DO-files task"
-python3 query.py "Journal: Feeling productive today"
+uv run python query.py "Add to today: Met with team, discussed Q1 goals"
+uv run python query.py "Log: Completed DO-files task"
+uv run python query.py "Journal: Feeling productive today"
 ```
 
 **Result:** Appends to `Daily/2026-01-28.md` with timestamp.
@@ -115,9 +115,9 @@ python3 query.py "Journal: Feeling productive today"
 ### Search & Retrieval
 
 ```bash
-python3 query.py "What did I note about Canadian contract?"
-python3 query.py "Find notes about Dennis"
-python3 query.py "Show my notes from today"
+uv run python query.py "What did I note about Canadian contract?"
+uv run python query.py "Find notes about Dennis"
+uv run python query.py "Show my notes from today"
 ```
 
 **Result:** Returns matching notes with paths and snippets.
@@ -159,7 +159,7 @@ User (Telegram) → Router → Note Agent → Obsidian Vault
 agents:
   note:
     path: "/home/server_lama/server-projects/note-agent"
-    query_command: "python query.py"
+    query_command: "uv run python query.py"
     model: "haiku"
 ```
 
