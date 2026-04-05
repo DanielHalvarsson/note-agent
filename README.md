@@ -1,159 +1,145 @@
 # Note Agent
 
-A specialized agent for conversational note-taking with Obsidian vault integration.
+A specialist agent in Daniel's Hayekian personal assistant system. Handles note capture, search, and a **wiki knowledge compiler** that turns raw source material into a structured, LLM-maintained knowledge base inside Obsidian.
 
-## Philosophy
+## What it does
 
-**Single Responsibility:** This agent handles ONLY note capture, search, and retrieval. Obsidian handles visualization (graph view, backlinks).
+**Note-taking** — capture thoughts via Telegram, auto-organize into Obsidian vault (people, projects, daily notes, inbox).
 
-**Hayekian Knowledge Distribution:**
-- **Router** maintains conversation history
-- **Note agent** uses context to auto-tag and organize notes
-- **Obsidian** provides UI, graph view, and manual curation
+**Wiki compilation** — raw sources (clippings, papers, fragments) land in `raw/`, get compiled by Claude into structured wiki articles with a tiered index system that keeps context windows small as the corpus grows.
 
 ## Architecture
 
 ```
 note-agent/
-├── query.py                  # Conversational interface (called by router)
+├── query.py          # Router entry point — note queries + wiki queries + handshakes
+├── compile.py        # Wiki compiler engine (LLM-powered)
+├── registry.py       # Tier 1: _registry.yaml — always-loaded master manifest
+├── indexer.py        # Tier 2: per-section _index.md — loaded on demand
+├── intake.py         # Raw source entry point — classify, register, scan
+├── monitor.py        # Daily health checks — pending sources, stale sections
 ├── scripts/
-│   └── note.py              # Obsidian vault operations
-├── state/                    # Local state (future)
-├── templates/                # Note templates (future)
-├── config.yaml              # Configuration (vault path)
-└── CLAUDE.md                # Note-taking instructions
+│   └── note.py       # Obsidian vault operations CLI
+└── config.yaml       # Vault path, Claude CLI config, wiki settings
 ```
 
-## Features (MVP)
-
-✅ **Quick Capture** - "Note: had great idea about X"
-✅ **Daily Notes** - "Add to today: met with Sarah"
-✅ **Search** - "What did I note about Canadian?"
-✅ **Auto-Organization** - Detects people, projects, tags
-✅ **Conversation Context** - "Note that" refers to recent discussion
-✅ **Frontmatter Metadata** - YAML frontmatter with timestamps, tags
-
-## Vault Structure
-
-The agent expects this Obsidian vault structure:
+## Vault structure
 
 ```
 obsidian-vault/
-├── Daily/              # Daily notes (YYYY-MM-DD.md)
-│   └── 2026-01-28.md
-├── Inbox/              # Quick captures (default)
-│   └── *.md
-├── People/             # People-related notes
-│   ├── Dennis.md
-│   └── Sarah.md
-├── Projects/           # Project notes
-│   ├── Canadian.md
-│   └── OpenAdam.md
-└── Templates/          # Note templates (future)
+├── Daily/            # Daily notes (YYYY-MM-DD.md)
+├── Inbox/            # Quick captures
+├── People/           # People notes
+├── Projects/         # Project notes
+├── wiki/             # Compiled knowledge base (LLM-maintained)
+│   ├── _registry.yaml        # Tier 1: master manifest (~5KB, always in context)
+│   ├── research/
+│   │   ├── _index.md         # Tier 2: section index (loaded on demand)
+│   │   └── *.md              # Tier 3: full articles
+│   ├── ideas/
+│   ├── references/
+│   └── personal/
+└── raw/              # Intake directory
+    ├── clippings/    # Web clippings
+    ├── fragments/    # Fragment Library / quick grabs
+    ├── papers/       # Research papers (from research agent)
+    └── notes/        # Note captures
 ```
 
-## Setup
+## Tiered indexing
 
-### 1. Install dependencies
+The wiki never loads the full corpus into context:
+
+| Tier | File | Size | When loaded |
+|------|------|------|-------------|
+| 1 | `_registry.yaml` | ~5KB | Every compilation |
+| 2 | `wiki/{section}/_index.md` | ~10KB | When working in a section |
+| 3 | `wiki/{section}/{slug}.md` | varies | Only the target article |
+
+This keeps compilation fast and token-cheap even at hundreds of articles.
+
+## Compilation loop
+
+For each new raw source:
+
+1. Load registry (Tier 1)
+2. **LLM Call #1 — classify & route** (haiku): which section? new article or update existing?
+3. Load section index (Tier 2)
+4. **LLM Call #2 — write or update** (sonnet): create knowledge article or merge new source into existing one
+5. Write article, update section index, update registry, mark source compiled
+
+## Setup
 
 ```bash
 cd ~/server-projects/note-agent
 uv venv
 uv pip install -r requirements.txt
-```
-
-### 2. Create Obsidian vault
-
-```bash
-# Create vault directory
-mkdir -p ~/obsidian-vault/{Daily,Inbox,People,Projects,Templates}
-
-# Or use existing vault - just update config.yaml
-```
-
-### 3. Configure
-
-```bash
 cp config.example.yaml config.yaml
-nano config.yaml  # Set vault_path
+# Edit config.yaml: set vault_path
 ```
 
-### 4. Test it
+Create vault directories:
 
 ```bash
-# Make executable
-chmod +x query.py scripts/note.py
-
-# Test operations
-uv run python query.py "Note: Testing the note agent"
-uv run python query.py "Add to today: Setup completed"
-uv run python query.py "What did I note today?"
+mkdir -p ~/obsidian-vault/{Daily,Inbox,People,Projects}
+mkdir -p ~/obsidian-vault/wiki/{research,ideas,references,personal}
+mkdir -p ~/obsidian-vault/raw/{clippings,fragments,papers,notes}
 ```
 
-## Usage Examples
+## Usage
 
-### Quick Captures
+### Note capture (via Telegram or CLI)
 
 ```bash
-uv run python query.py "Note: had great idea about using AI for X"
-uv run python query.py "Capture: follow up with Dennis about Canadian"
-uv run python query.py "Remember: Sarah mentioned budget approval"
+uv run python query.py "Note: had great idea about X"
+uv run python query.py "Add to today: met with Sarah"
+uv run python query.py "What did I note about Canadian?"
 ```
 
-**Result:** Saves to `Inbox/` with auto-detected tags and metadata.
-
-### Daily Notes
+### Wiki queries
 
 ```bash
-uv run python query.py "Add to today: Met with team, discussed Q1 goals"
-uv run python query.py "Log: Completed DO-files task"
-uv run python query.py "Journal: Feeling productive today"
+uv run python query.py "Wiki status"
+uv run python query.py "What does the wiki know about firm dynamics?"
 ```
 
-**Result:** Appends to `Daily/2026-01-28.md` with timestamp.
-
-### Search & Retrieval
+### Compile sources
 
 ```bash
-uv run python query.py "What did I note about Canadian contract?"
-uv run python query.py "Find notes about Dennis"
-uv run python query.py "Show my notes from today"
+# Register and compile a single file
+uv run python intake.py /path/to/source.md
+uv run python compile.py raw/clippings/source.md
+
+# Scan raw/ for new files, then compile all pending
+uv run python intake.py --scan
+uv run python intake.py --process
+
+# Or directly
+uv run python compile.py --all
 ```
 
-**Result:** Returns matching notes with paths and snippets.
-
-### Direct Script Usage
-
-For batch operations or testing:
+### Inspect the registry and indexes
 
 ```bash
-# Create note
-uv run scripts/note.py create "Meeting Notes" "Discussed budget with Sarah" "meeting,budget,sarah" "Inbox"
-
-# Append to daily
-uv run scripts/note.py append-daily "Completed task X" "tasks,completion"
-
-# Search
-uv run scripts/note.py search "Canadian" "Projects"
-
-# List recent
-uv run scripts/note.py list "Daily" 5
+uv run python registry.py --context   # Tier 1 context (what Claude sees)
+uv run python registry.py --pending   # Pending sources
+uv run python indexer.py --section research  # Section index
 ```
 
-## Integration with Router
+## Handshakes (agent-to-agent)
 
-The note-agent integrates with personal-assistant router for Telegram access:
+```bash
+# Research agent drops a paper for compilation
+uv run python query.py --handshake '{"action": "compile_source", "source_path": "raw/papers/paper.md", "source_type": "paper"}'
 
-**Router keywords:** "note", "capture", "remember", "add to today", "what did I note"
+# Any agent queries the wiki
+uv run python query.py --handshake '{"action": "query_wiki", "topic": "AI labor demand"}'
 
-**Request flow:**
+# Research agent returns citations
+uv run python query.py --handshake '{"action": "citation_results", "papers": [...], "note_path": "Inbox/note.md"}'
 ```
-User (Telegram) → Router → Note Agent → Obsidian Vault
-                                    ↓
-                              Response (confirmation)
-```
 
-### Add to router config:
+## Router config
 
 ```yaml
 agents:
@@ -163,133 +149,19 @@ agents:
     model: "haiku"
 ```
 
-## Conversation Context
+Router keywords: "note", "capture", "remember", "add to today", "wiki", "what does the wiki know", "compile"
 
-The note-agent receives conversation history, enabling context-aware captures:
+## Monitor
 
-```
-User: "I just talked to Dennis about the Canadian contract"
-Assistant: "How did it go?"
-User: "Note that"
-Agent: ✓ Saved to Projects/Canadian.md
-       • Content: "Talked to Dennis about Canadian contract"
-       • Tagged: #dennis #canadian
-       • Detected: Dennis (person), Canadian (project)
-```
+`monitor.py` runs daily via cron and alerts via Telegram if:
+- Sources have been pending compilation for >48 hours
+- A section with pending sources hasn't been updated in 2+ weeks
+- Sunday: wiki review prompt if articles exist
 
-## Auto-Detection Features
+## Design principles
 
-### People Detection
-- Recognizes capitalized names: Dennis, Sarah, John
-- Adds to `people:` frontmatter
-- Can auto-file to `People/` folder if primarily about one person
-
-### Project Detection
-- Recognizes all-caps keywords: CANADIAN, OPENAI
-- Adds to `projects:` frontmatter
-- Can auto-file to `Projects/` folder
-
-### Tag Extraction
-- Hashtags in content: #meeting #decision
-- Content-based: mentions "deadline" → #deadline
-- Context-based: after calendar event → #meeting
-
-## Note Format
-
-All notes use frontmatter for metadata:
-
-```markdown
----
-created: 2026-01-28T14:30:00
-modified: 2026-01-28T14:30:00
-tags: [meeting, canadian, dennis]
-people: [Dennis]
-projects: [Canadian]
----
-
-# DO-files for Canadian
-
-Dennis mentioned we need to prepare DO-files for Canadian project by Friday.
-
-Action items:
-- [ ] Gather required documents
-- [ ] Review with legal
-- [ ] Submit by Friday
-```
-
-## Comparison with Other Agents
-
-| Feature | calendar-agent | email-agent | task-agent | **note-agent** |
-|---------|---------------|-------------|------------|----------------|
-| **Purpose** | Events/meetings | Email triage | To-dos | Knowledge capture |
-| **Actions** | Create/modify | Read/classify | CRUD tasks | Create/search notes |
-| **Model** | Sonnet | Haiku | Haiku | Haiku |
-| **Storage** | Google Calendar | Gmail | Google Tasks | Local Obsidian vault |
-| **State** | Stateless | Classification history | Stateless | File-based (markdown) |
-
-## Future Enhancements
-
-**Phase 2 (Post-MVP):**
-- [ ] Meeting note templates (auto-create from calendar events)
-- [ ] Extract action items → task-agent integration
-- [ ] Periodic notes (weekly, monthly summaries)
-- [ ] Smart folder organization (ML-based)
-- [ ] Link suggestions (based on content similarity)
-
-**Phase 3:**
-- [ ] Voice note transcription
-- [ ] Image/attachment handling
-- [ ] Note versioning (git integration)
-- [ ] Collaborative notes (shared vault support)
-
-## Troubleshooting
-
-**Notes not appearing in Obsidian:**
-- Check vault path in config.yaml
-- Verify Obsidian is pointed to same vault directory
-- Refresh Obsidian vault (Cmd/Ctrl + R)
-
-**Auto-detection not working:**
-- People names must be capitalized
-- Projects must be all-caps or explicitly mentioned
-- Check CLAUDE.md for detection patterns
-
-**Search returns no results:**
-- Notes must contain query text
-- Case-insensitive search
-- Try broader search terms
-
-## Development
-
-Run tests:
-```bash
-# Test note creation
-uv run scripts/note.py create "Test" "Test content" "test"
-
-# Test daily append
-uv run scripts/note.py append-daily "Test entry"
-
-# Test search
-uv run scripts/note.py search "test"
-```
-
-## Philosophy Notes
-
-**Why file-based (not database)?**
-- Obsidian uses markdown files
-- User owns their data
-- Works with any text editor
-- Git-friendly
-- No vendor lock-in
-
-**Why Inbox-first?**
-- Capture > organize
-- Reduces friction
-- User curates later in Obsidian
-- Agent focuses on speed
-
-**Why auto-detect vs ask?**
-- Faster capture
-- Uses conversation context
-- User can override in Obsidian
-- Wrong folder < missed capture
+- **Tiered indexing, not RAG** — well-structured index files + dense summaries let Claude navigate the corpus without vector search. Sufficient up to ~400K words (Karpathy's observation).
+- **LLM maintains the wiki, human queries it** — articles are written and updated by the compiler. You supply raw material and ask questions.
+- **Plumbing is pure Python** — `registry.py`, `indexer.py`, `intake.py` have no LLM calls. Fast, testable, reliable.
+- **Obsidian as frontend** — wiki lives in plain `.md` files. Browse, search, and graph-view natively without any special tooling.
+- **Conservative merging** — the update prompt instructs Claude to add, not replace. Source provenance is tracked in article frontmatter and a Source Notes section.
